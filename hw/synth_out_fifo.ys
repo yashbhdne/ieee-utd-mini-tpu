@@ -1,0 +1,8 @@
+# Supplementary open-source resource check; does not replace Vivado acceptance.
+# From the repository root: yosys -s hw/synth_out_fifo.ys
+read_verilog -sv rtl/ctrl/out_fifo/out_fifo.sv
+synth_xilinx -family xc7 -top out_fifo
+check -assert
+select -assert-count 1 t:RAMB36E1
+select -assert-none t:DSP48E1
+tee -o rtl/ctrl/out_fifo/out_fifo_yosys.rpt stat

@@ -11,12 +11,25 @@ Builds go to build/sim/<bench>/. Benches run from the repository root, so vector
 start with vectors/.
 """
 import argparse
+import os
 import pathlib
+import shutil
 import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 BUILD = ROOT / "build" / "sim"
+
+# OSS CAD Suite on Windows ships a native binary beside the Perl launcher.
+VERILATOR = os.environ.get("VERILATOR") or (
+    "verilator_bin" if os.name == "nt" and shutil.which("verilator_bin") else "verilator"
+)
+if os.name == "nt" and "VERILATOR_ROOT" not in os.environ:
+    executable = shutil.which(VERILATOR)
+    if executable:
+        support = pathlib.Path(executable).resolve().parents[1] / "share" / "verilator"
+        if support.is_dir():
+            os.environ["VERILATOR_ROOT"] = support.as_posix()
 
 # Packages must come first on the command line.
 RTL_PKGS = ["rtl/mxu/mxu_pkg.sv"]
@@ -61,7 +74,7 @@ def lint():
         if f in RTL_PKGS:
             continue
         top = pathlib.Path(f).stem
-        r = run(["verilator", "--lint-only", "--top-module", top] + files)
+        r = run([VERILATOR, "--lint-only", "--top-module", top] + files)
         ok = r.returncode == 0
         print(f"{'ok  ' if ok else 'FAIL'}  {f}")
         if not ok:
@@ -70,7 +83,7 @@ def lint():
     return failed
 
 
-def sim(names, plusargs):
+def sim(names, plusargs, build_only=False):
     results = []
     for bench in benches():
         name = bench.stem
@@ -80,8 +93,9 @@ def sim(names, plusargs):
             tag = name + "".join(f"_{k}{v}" for k, v in params.items())
             mdir = BUILD / tag
             mdir.mkdir(parents=True, exist_ok=True)
-            cmd = ["verilator", "--binary", "--timing", "--timescale", "1ns/1ps",
-                   "-j", "0", "--top-module", name, "-Mdir", str(mdir), "-o", "sim"]
+            cmd = [VERILATOR, "--binary", "--timing", "--timescale", "1ns/1ps",
+                   "-j", "4", "--top-module", name, "-Mdir", mdir.as_posix(),
+                   "-o", "sim.exe" if os.name == "nt" else "sim"]
             cmd += [f"-G{k}=1'b{v}" if k in BIT_PARAMS else f"-G{k}={v}"
                     for k, v in params.items()]
             cmd += rtl_files() + common_files() + [bench.relative_to(ROOT).as_posix()]
@@ -90,7 +104,16 @@ def sim(names, plusargs):
                 print(r.stdout + r.stderr)
                 results.append((tag, "BUILD FAIL"))
                 continue
-            r = run([str(mdir / "sim")] + plusargs)
+            if build_only:
+                results.append((tag, "BUILD OK"))
+                continue
+            try:
+                r = run([str(mdir / ("sim.exe" if os.name == "nt" else "sim"))] + plusargs,
+                        timeout=300)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                print(f"{tag}: simulation could not complete: {exc}")
+                results.append((tag, "RUN ERROR"))
+                continue
             lines = [l.strip() for l in r.stdout.splitlines()]
             if r.returncode != 0:
                 verdict = "FAIL"
@@ -109,7 +132,7 @@ def sim(names, plusargs):
     if names and not results:
         print("no bench matched", names)
         return ["none"]
-    return [t for t, v in results if v not in ("PASS", "SKIP")]
+    return [t for t, v in results if v not in ("PASS", "SKIP", "BUILD OK")]
 
 
 def main():
@@ -121,8 +144,12 @@ def main():
     ap = argparse.ArgumentParser(description="Verilator lint and bench runner")
     ap.add_argument("cmd", choices=["lint", "sim"])
     ap.add_argument("benches", nargs="*")
+    ap.add_argument("--build-only", action="store_true",
+                    help="compile simulation binaries without executing them")
     args = ap.parse_args(argv)
-    failed = lint() if args.cmd == "lint" else sim(args.benches, plusargs)
+    if args.cmd == "lint" and args.build_only:
+        ap.error("--build-only applies only to sim")
+    failed = lint() if args.cmd == "lint" else sim(args.benches, plusargs, args.build_only)
     sys.exit(1 if failed else 0)
 
 

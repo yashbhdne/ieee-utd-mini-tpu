@@ -1,0 +1,26 @@
+
+4. Printing statistics.
+
+=== out_fifo ===
+
+        +----------Local Count, excluding submodules.
+        | 
+      245 wires
+      441 wire bits
+       15 public wires
+      166 public wire bits
+       12 ports
+      138 port bits
+      202 cells
+        1   BUFG
+        9   CARRY4
+       29   FDRE
+       69   IBUF
+        3   INV
+        7   LUT2
+        8   LUT3
+        4   LUT4
+        2   LUT5
+       69   OBUF
+        1   RAMB36E1
+

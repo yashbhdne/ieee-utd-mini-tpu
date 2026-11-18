@@ -1,5 +1,6 @@
 """Replay positive seeds and require specific diagnostics from deliberate failures."""
 import argparse
+import os
 import pathlib
 import subprocess
 import sys
@@ -39,7 +40,7 @@ def run(args):
 
 
 def binary(tag):
-    path = ROOT / "build" / "sim" / tag / "sim"
+    path = ROOT / "build" / "sim" / tag / ("sim.exe" if os.name == "nt" else "sim")
     if not path.is_file():
         raise FileNotFoundError(f"Missing {path}; run python tb/run.py sim first")
     return str(path)
@@ -58,26 +59,39 @@ def negative_ok(result, diagnostic):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--skip-build", action="store_true", help="reuse binaries from tb/run.py sim")
+    parser.add_argument("--exclude-tag", action="append", default=[], choices=TAGS,
+                        help="do not execute this binary; requires --skip-build and leaves the suite incomplete")
     args = parser.parse_args(argv)
+    if args.exclude_tag and not args.skip_build:
+        parser.error("--exclude-tag requires --skip-build; compile safely with tb/run.py sim --build-only")
     if not args.skip_build:
         result = run([sys.executable, "tb/run.py", "sim", *BENCHES])
         print(result.stdout + result.stderr)
         if result.returncode:
             return 1
+    passed = omitted = 0
     for seed in (1, 7, 29):
         for tag in TAGS:
+            if tag in args.exclude_tag:
+                print(f"NOT RUN: {tag} seed={seed}: explicitly excluded")
+                omitted += 1
+                continue
             result = run([binary(tag), f"+seed={seed}"])
             print(f"--- {tag} seed={seed} ---")
             print(result.stdout + result.stderr)
             if not positive_ok(result):
                 return 1
+            passed += 1
     for bench, arg, case, diagnostic in CASES:
         result = run([binary(bench), f"+{arg}={case}"])
         if not negative_ok(result, diagnostic):
             print(f"FAIL expected rejection: {case}\n{result.stdout}{result.stderr}")
             return 1
         print(f"PASS expected rejection: {bench}/{case}")
-    return 0
+        passed += 1
+    print(f"SUMMARY: {passed} passed, {omitted} not run")
+    # An excluded check never turns an incomplete regression green.
+    return 1 if omitted else 0
 
 
 if __name__ == "__main__":
